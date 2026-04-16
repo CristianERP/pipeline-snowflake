@@ -1,0 +1,138 @@
+import json
+from datetime import datetime
+
+from airflow import DAG
+from airflow.decorators import task
+from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+from airflow.providers.slack.operators.slack_webhook import \
+    SlackWebhookOperator
+from airflow.task.trigger_rule import TriggerRule
+from utils.normalization import normalize_csv_bytes_to_utf8
+
+FILES = [
+    {"file_name": "categories.csv", "table_name": "CATEGORIES"},
+    {"file_name": "cities.csv", "table_name": "CITIES"},
+    {"file_name": "events.csv", "table_name": "EVENTS"},
+    {"file_name": "groups.csv", "table_name": "GROUPS"},
+    {"file_name": "groups_topics.csv", "table_name": "GROUPS_TOPICS"},
+    # {"file_name": "members.csv", "table_name": "MEMBERS"},
+    {"file_name": "members_topics.csv", "table_name": "MEMBERS_TOPICS"},
+    {"file_name": "topics.csv", "table_name": "TOPICS"},
+    {"file_name": "venues.csv", "table_name": "VENUES"},
+]
+
+
+BUCKET = "meetup-pipeline-2026"
+SOURCE_PREFIX = "landing/"
+NORMALIZED_PREFIX = "landing_normalized/"
+
+
+@task
+def normalize_one_file(file_info: dict) -> dict:
+    hook = S3Hook(aws_conn_id="aws_default")
+
+    file_name = file_info["file_name"]
+    table_name = file_info["table_name"]
+
+    source_key = f"{SOURCE_PREFIX}{file_name}"
+    target_key = f"{NORMALIZED_PREFIX}{file_name}"
+
+    s3_obj = hook.get_key(key=source_key, bucket_name=BUCKET)
+    raw_bytes = s3_obj.get()["Body"].read()
+
+    normalized_text, detected_encoding = normalize_csv_bytes_to_utf8(raw_bytes)
+
+    hook.load_string(
+        string_data=normalized_text,
+        key=target_key,
+        bucket_name=BUCKET,
+        replace=True,
+        encoding="utf-8",
+    )
+
+    return {
+        "file_name": file_name,
+        "table_name": table_name,
+        "normalized_key": target_key,
+        "detected_encoding": detected_encoding,
+    }
+
+
+
+@task
+def build_sql(file_info: dict) -> str:
+    file_name = file_info["file_name"]
+    table_name = file_info["table_name"]
+
+    return f"""
+    CREATE OR REPLACE TABLE RAW.{table_name}
+    USING TEMPLATE (
+      SELECT ARRAY_AGG(OBJECT_CONSTRUCT(*)) WITHIN GROUP (ORDER BY ORDER_ID)
+      FROM TABLE(
+        INFER_SCHEMA(
+          LOCATION => '@RAW.MEETUP_LANDING_STAGE/{file_name}',
+          FILE_FORMAT => 'RAW.CSV_FMT'
+        )
+      )
+    );
+
+    COPY INTO RAW.{table_name}
+    FROM @RAW.MEETUP_LANDING_STAGE/{file_name}
+    FILE_FORMAT = (FORMAT_NAME = 'RAW.CSV_FMT')
+    MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
+    """
+
+with DAG(
+    dag_id="meetup_load_raw",
+    start_date=datetime(2026, 4, 1),
+    schedule=None,
+    catchup=False,
+    tags=["meetup", "load_raw"]
+) as dag:
+
+    normalized_files = normalize_one_file.expand(file_info=FILES)
+
+    sql_statements = build_sql.expand(file_info=FILES)
+
+    load_raw = SQLExecuteQueryOperator.partial(
+        task_id="meetup_raw_load_from_s3",
+        conn_id="snowflake_default",
+        database="MEETUP_DE",
+    ).expand(sql=sql_statements)
+
+    incremental_structure = SQLExecuteQueryOperator(
+        task_id="incremental_structure",
+        conn_id="snowflake_default",
+        database="MEETUP_DE",
+        sql="""
+        CREATE TABLE IF NOT EXISTS MEETUP_DE.RAW.EVENTS_STAGE_15M
+        LIKE MEETUP_DE.RAW.EVENTS;
+        """
+    )
+
+    build_analytics_initial = SQLExecuteQueryOperator(
+        task_id="build_analytics_initial",
+        conn_id="snowflake_default",
+        database="MEETUP_DE",
+        sql="sql/rebuild.sql",
+        split_statements=True,
+    )
+    
+    notify_success = SlackWebhookOperator(
+        task_id="notify_success",
+        slack_webhook_conn_id="slack_webhook_default",
+        message="Carga RAW en Snowflake completada correctamente para todos los archivos.",
+    )
+
+    notify_failure = SlackWebhookOperator(
+        task_id="notify_failure",
+        slack_webhook_conn_id="slack_webhook_default",
+        message="Falló la normalización o la carga RAW en Snowflake.",
+        trigger_rule=TriggerRule.ONE_FAILED,
+    )
+
+    normalized_files >> sql_statements >> load_raw >> incremental_structure >> build_analytics_initial >> notify_success
+    [normalized_files, load_raw] >> notify_failure
+
+
