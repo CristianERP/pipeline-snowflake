@@ -5,6 +5,7 @@ import tempfile
 import uuid
 from datetime import datetime
 
+from airflow.operators.python import get_current_context
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.slack.operators.slack_webhook import \
@@ -16,6 +17,136 @@ from airflow.task.trigger_rule import TriggerRule
 BUCKET = "meetup-pipeline-2026"
 INCREMENTAL_PREFIX = "incremental/events/"
 
+@task
+def validate_events_stage() -> dict:
+    context = get_current_context()
+    hook = SnowflakeHook(snowflake_conn_id="snowflake_default")
+
+    checks = {
+        "row_count": (
+            """
+            SELECT COUNT(*)
+            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            """,
+            lambda v: v > 0,
+            "EVENTS_STAGE_15M está vacía"
+        ),
+        "null_event_id": (
+            """
+            SELECT COUNT(*)
+            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            WHERE "event_id" IS NULL
+            """,
+            lambda v: v == 0,
+            "Hay event_id nulos"
+        ),
+        "duplicate_event_id": (
+            """
+            SELECT COUNT(*)
+            FROM (
+                SELECT "event_id"
+                FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+                GROUP BY 1
+                HAVING COUNT(*) > 1
+            )
+            """,
+            lambda v: v == 0,
+            "Hay event_id duplicados en stage"
+        ),
+        "negative_rsvp_values": (
+            """
+            SELECT COUNT(*)
+            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            WHERE COALESCE("yes_rsvp_count", 0) < 0
+               OR COALESCE("maybe_rsvp_count", 0) < 0
+               OR COALESCE("waitlist_count", 0) < 0
+            """,
+            lambda v: v == 0,
+            "Hay métricas RSVP negativas"
+        ),
+        "invalid_status": (
+            """
+            SELECT COUNT(*)
+            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            WHERE "event_status" IS NOT NULL
+              AND LOWER("event_status") NOT IN ('upcoming', 'cancelled', 'past', 'draft')
+            """,
+            lambda v: v == 0,
+            "Hay event_status fuera del dominio permitido"
+        ),
+        "updated_before_created": (
+            """
+            SELECT COUNT(*)
+            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            WHERE "created" IS NOT NULL
+              AND "updated" IS NOT NULL
+              AND "updated" < "created"
+            """,
+            lambda v: v == 0,
+            "Hay registros con updated < created"
+        ),
+    }
+
+    rows_to_insert = []
+    failures = []
+    metrics = {}
+
+    dag_id = context["dag"].dag_id
+    task_id = context["task"].task_id
+    run_id = context["run_id"]
+    source_table = "MEETUP_DE.RAW.EVENTS_STAGE_15M"
+
+    for check_name, (sql, rule, error_message) in checks.items():
+        value = hook.get_records(sql)[0][0]
+        passed = rule(value)
+
+        metrics[check_name] = value
+
+        rows_to_insert.append(
+            (
+                dag_id,
+                task_id,
+                run_id,
+                source_table,
+                check_name,
+                "PASS" if passed else "FAIL",
+                int(value) if value is not None else None,
+                None if passed else error_message,
+            )
+        )
+
+        if not passed:
+            failures.append(f"{check_name}={value} -> {error_message}")
+
+    conn = hook.get_conn()
+    cur = conn.cursor()
+
+    try:
+        cur.executemany(
+            """
+            INSERT INTO MEETUP_DE.MONITORING.DQ_RESULTS (
+                dag_id,
+                task_id,
+                run_id,
+                source_table,
+                check_name,
+                status,
+                metric_value,
+                error_message
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            rows_to_insert,
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        conn.close()
+
+    if failures:
+        raise ValueError(" | ".join(failures))
+
+    return metrics
 
 @task
 def generate_events_delta() -> dict:
@@ -122,7 +253,8 @@ with DAG(
     max_active_runs=1,
     tags=["meetup", "incremental"],
 ) as dag:
-
+    
+    stage_quality = validate_events_stage()
     delta_info = generate_events_delta()
     uploaded_delta = upload_delta_to_s3(delta_info)
     copy_sql = build_copy_sql(uploaded_delta)
@@ -171,5 +303,5 @@ with DAG(
         message="Falló el proceso incremental de EVENTS.",
         trigger_rule=TriggerRule.ONE_FAILED,
     )
-    delta_info >> uploaded_delta >> truncate_stage_table >> copy_delta_to_stage >> merge_events >> rebuild >> export_processed >> notify_success
-    [uploaded_delta, copy_delta_to_stage, merge_events, rebuild] >> notify_failure
+    delta_info >> uploaded_delta >> truncate_stage_table >> copy_delta_to_stage >> stage_quality >> merge_events >> rebuild >> export_processed >> notify_success
+    [uploaded_delta, copy_delta_to_stage, stage_quality , merge_events, rebuild] >> notify_failure
