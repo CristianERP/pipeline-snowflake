@@ -6,6 +6,40 @@ Pipeline de datos usando **Airflow, Snowflake, AWS S3 y Slack**.
 
 Cargar un dataset de Meetup en Snowflake, automatizar su procesamiento con Airflow, generar tablas analíticas y exportar resultados a S3.
 
+## Architecture Diagram
+
+This project orchestrates a Meetup data pipeline with Airflow, Snowflake, AWS S3, and Slack.
+
+```mermaid
+flowchart LR
+    A[Meetup CSV dataset] --> B[S3 raw files]
+
+    subgraph C[Airflow with Docker Compose]
+        C1[meetup_structure_snowflake]
+        C2[meetup_raw_load_from_s3]
+        C3[meetup_incremental_15m]
+    end
+
+    B --> C2
+    C1 --> D
+
+    subgraph D[Snowflake]
+        D1[RAW]
+        D2[MONITORING]
+        D3[ANALYTICS]
+    end
+
+    C2 --> D1
+    C3 --> E[S3 incremental delta]
+    E --> F[Snowflake stage]
+    F --> D1
+    C3 --> D2
+    D1 --> D3
+    D3 --> G[S3 processed exports]
+
+    C3 --> H[Slack notifications]
+```
+
 ## Tecnologías usadas
 
 - Apache Airflow
