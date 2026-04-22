@@ -12,7 +12,16 @@ from src.services.storage import upload_file_to_s3
 BUCKET = "meetup-pipeline-2026"
 INCREMENTAL_PREFIX = "incremental/events/"
 
-@task
+DEFAULT_ARGS = {
+    "owner": "cristian",
+    "retries": 3,
+    "retry_delay": timedelta(minutes=2),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=15),
+}
+
+
+@task(retries=0)
 def validate_events_stage():
     return run_stage_quality_checks()
 
@@ -40,6 +49,7 @@ with DAG(
     schedule="*/15 * * * *",
     catchup=False,
     max_active_runs=1,
+    default_args=DEFAULT_ARGS,
     tags=["meetup", "incremental"],
 ) as dag:
     
