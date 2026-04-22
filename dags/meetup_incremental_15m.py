@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.slack.operators.slack_webhook import \
@@ -25,16 +25,21 @@ DEFAULT_ARGS = {
 def validate_events_stage():
     return run_stage_quality_checks()
 
-@task
+@task(retries=1)
 def generate_events_delta() -> dict:
     return generate_events_delta_file(INCREMENTAL_PREFIX)
 
 
-@task
+@task(
+    retries=3,
+    retry_delay=timedelta(minutes=2),
+    retry_exponential_backoff=True,
+    max_retry_delay=timedelta(minutes=10),
+)
 def upload_delta_to_s3(delta_info: dict) -> dict:
     return upload_file_to_s3(delta_info=delta_info, bucket=BUCKET)
 
-@task
+@task(retries=0)
 def build_copy_sql(delta_info: dict) -> str:
     return f"""
     COPY INTO MEETUP_DE.RAW.EVENTS_STAGE_15M
@@ -62,18 +67,21 @@ with DAG(
         task_id="truncate_stage_table",
         conn_id="snowflake_default",
         sql="TRUNCATE TABLE MEETUP_DE.RAW.EVENTS_STAGE_15M;",
+        retries=1,
     )
 
     copy_delta_to_stage = SQLExecuteQueryOperator(
         task_id="copy_delta_to_stage",
         conn_id="snowflake_default",
         sql=copy_sql,
+        retries=3,
     )
 
     merge_events = SQLExecuteQueryOperator(
         task_id="merge_events",
         conn_id="snowflake_default",
         sql="sql/merge_events.sql",
+        retries=2,
     )
 
     rebuild = SQLExecuteQueryOperator(
@@ -81,6 +89,7 @@ with DAG(
         conn_id="snowflake_default",
         sql="sql/rebuild.sql",
         split_statements=True,
+        retries=2,
     )
 
     export_processed = SQLExecuteQueryOperator(
@@ -88,12 +97,14 @@ with DAG(
         conn_id="snowflake_default",
         sql="sql/export_data.sql",
         split_statements=True,
+        retries=3,
     )
 
     notify_success = SlackWebhookOperator(
         task_id="notify_success",
         slack_webhook_conn_id="slack_webhook_default",
         message="Proceso incremental de EVENTS ejecutado correctamente.",
+        retries=2,
     )
 
     notify_failure = SlackWebhookOperator(
@@ -101,6 +112,29 @@ with DAG(
         slack_webhook_conn_id="slack_webhook_default",
         message="Falló el proceso incremental de EVENTS.",
         trigger_rule=TriggerRule.ONE_FAILED,
+        retries=2,
     )
-    delta_info >> uploaded_delta >> truncate_stage_table >> copy_delta_to_stage >> stage_quality >> merge_events >> rebuild >> export_processed >> notify_success
-    [uploaded_delta, copy_delta_to_stage, stage_quality , merge_events, rebuild] >> notify_failure
+
+    (
+        delta_info
+        >> uploaded_delta
+        >> truncate_stage_table
+        >> copy_delta_to_stage
+        >> stage_quality
+        >> merge_events
+        >> rebuild
+        >> export_processed
+        >> notify_success
+    )
+
+    [   
+        delta_info,
+        uploaded_delta,
+        copy_delta_to_stage,
+        truncate_stage_table,
+        copy_delta_to_stage,
+        stage_quality,
+        merge_events,
+        rebuild,
+        export_processed
+    ] >> notify_failure
