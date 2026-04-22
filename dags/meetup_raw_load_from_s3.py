@@ -1,5 +1,4 @@
-import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.decorators import task
@@ -22,13 +21,26 @@ FILES = [
     {"file_name": "venues.csv", "table_name": "VENUES"},
 ]
 
+DEFAULT_RETRY_ARGS = {
+    "owner": "cristian",
+    "retries": 2,
+    "retry_delay": timedelta(minutes=2),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": timedelta(minutes=10),
+}
+
 
 BUCKET = "meetup-pipeline-2026"
 SOURCE_PREFIX = "landing/"
 NORMALIZED_PREFIX = "landing_normalized/"
 
 
-@task
+@task(
+    retries=3,
+    retry_delay=timedelta(minutes=2),
+    retry_exponential_backoff=True,
+    max_retry_delay=timedelta(minutes=10),
+)
 def normalize_one_file(file_info: dict) -> dict:
     hook = S3Hook(aws_conn_id="aws_default")
 
@@ -88,6 +100,7 @@ with DAG(
     start_date=datetime(2026, 4, 1),
     schedule=None,
     catchup=False,
+    default_args=DEFAULT_RETRY_ARGS,
     tags=["meetup", "load_raw"]
 ) as dag:
 
@@ -99,6 +112,7 @@ with DAG(
         task_id="meetup_raw_load_from_s3",
         conn_id="snowflake_default",
         database="MEETUP_DE",
+        retries=3,
     ).expand(sql=sql_statements)
 
     incremental_structure = SQLExecuteQueryOperator(
@@ -108,7 +122,8 @@ with DAG(
         sql="""
         CREATE TABLE IF NOT EXISTS MEETUP_DE.RAW.EVENTS_STAGE_15M
         LIKE MEETUP_DE.RAW.EVENTS;
-        """
+        """,
+        retries=1,
     )
 
     build_analytics_initial = SQLExecuteQueryOperator(
@@ -117,12 +132,14 @@ with DAG(
         database="MEETUP_DE",
         sql="sql/rebuild.sql",
         split_statements=True,
+        retries=2,
     )
     
     notify_success = SlackWebhookOperator(
         task_id="notify_success",
         slack_webhook_conn_id="slack_webhook_default",
         message="Carga RAW en Snowflake completada correctamente para todos los archivos.",
+        retries=2,
     )
 
     notify_failure = SlackWebhookOperator(
@@ -130,6 +147,7 @@ with DAG(
         slack_webhook_conn_id="slack_webhook_default",
         message="Falló la normalización o la carga RAW en Snowflake.",
         trigger_rule=TriggerRule.ONE_FAILED,
+        retries=2,
     )
 
     normalized_files >> sql_statements >> load_raw >> incremental_structure >> build_analytics_initial >> notify_success
