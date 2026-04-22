@@ -54,3 +54,32 @@ CREATE TABLE IF NOT EXISTS MONITORING.DQ_RESULTS (
     error_message STRING,
     checked_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
+
+CREATE TABLE IF NOT EXISTS MONITORING.PIPELINE_RUNS (
+    id INTEGER AUTOINCREMENT,
+    dag_id STRING,
+    run_id STRING,
+    logical_date TIMESTAMP_NTZ,
+    status STRING,
+    started_at TIMESTAMP_NTZ,
+    ended_at TIMESTAMP_NTZ,
+    error_message STRING,
+    updated_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
+
+CREATE TABLE IF NOT EXISTS MONITORING.FILE_AUDIT (
+    id INTEGER AUTOINCREMENT,
+    dag_id STRING,
+    run_id STRING,
+    task_id STRING,
+    file_name STRING,
+    table_name STRING,
+    source_key STRING,
+    normalized_key STRING,
+    s3_key STRING,
+    detected_encoding STRING,
+    row_count NUMBER(38, 0),
+    status STRING,
+    event_type STRING,
+    processed_at TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+);
