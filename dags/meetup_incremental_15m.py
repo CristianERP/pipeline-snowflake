@@ -102,10 +102,10 @@ with DAG(
     delta_info = generate_events_delta()
     audited_delta = audit_delta_generated(delta_info)
     
-    uploaded_delta = upload_delta_to_s3(delta_info)
+    uploaded_delta = upload_delta_to_s3(audited_delta)
     audited_upload = audit_delta_uploaded(uploaded_delta)
 
-    copy_sql = build_copy_sql(uploaded_delta)
+    copy_sql = build_copy_sql(audited_delta)
 
     truncate_stage_table = SQLExecuteQueryOperator(
         task_id="truncate_stage_table",
@@ -177,19 +177,22 @@ with DAG(
         >> merge_events
         >> rebuild
         >> export_processed
-        >> notify_success
-        >> run_success
     )
+    export_processed >> [notify_success, run_success]
+    
+    failure_upstreams = [
+    delta_info,
+    audited_delta,
+    uploaded_delta,
+    audited_upload,
+    truncate_stage_table,
+    copy_delta_to_stage,
+    stage_quality,
+    merge_events,
+    rebuild,
+    export_processed,
+]
 
-    [
-        delta_info,
-        audited_delta,
-        uploaded_delta,
-        audited_upload,
-        truncate_stage_table,
-        copy_delta_to_stage,
-        stage_quality,
-        merge_events,
-        rebuild,
-        export_processed,
-    ] >> notify_failure >> run_failed
+for task in failure_upstreams:
+    task >> notify_failure
+    task >> run_failed
