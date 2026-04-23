@@ -38,6 +38,27 @@ def run_stage_quality_checks() -> dict:
             lambda v: v == 0,
             "Hay event_id duplicados"
         ),
+        "negative_rsvp_values": (
+            """
+            SELECT COUNT(*)
+            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            WHERE COALESCE("yes_rsvp_count", 0) < 0
+               OR COALESCE("maybe_rsvp_count", 0) < 0
+               OR COALESCE("waitlist_count", 0) < 0
+            """,
+            lambda v: v == 0,
+            "Hay métricas RSVP negativas"
+        ),
+        "invalid_status": (
+            """
+            SELECT COUNT(*)
+            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            WHERE "event_status" IS NOT NULL
+              AND LOWER("event_status") NOT IN ('upcoming', 'cancelled')
+            """,
+            lambda v: v == 0,
+            "Hay event_status fuera del dominio permitido"
+        )
     }
 
     dag_id = context["dag"].dag_id
