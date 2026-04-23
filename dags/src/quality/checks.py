@@ -7,6 +7,26 @@ def run_stage_quality_checks() -> dict:
     context = get_current_context()
     hook = SnowflakeHook(snowflake_conn_id="snowflake_default")
 
+    dag_id = context["dag"].dag_id
+    task_id = context["task"].task_id
+    run_id = context["run_id"]
+    source_table = "MEETUP_DE.RAW.EVENTS_STAGE_15M"
+
+    stage_row_count = hook.get_records(
+        f'SELECT COUNT(*) FROM {source_table}'
+    )[0][0]
+
+    expected_delta_rows = hook.get_records(
+        f"""
+        SELECT COALESCE(MAX(row_count), 0)
+        FROM MEETUP_DE.MONITORING.FILE_AUDIT
+        WHERE dag_id = '{dag_id}'
+          AND run_id = '{run_id}'
+          AND event_type IN ('DELTA_GENERATED', 'DELTA_UPLOADED')
+          AND status = 'SUCCESS'
+        """
+    )[0][0]
+
     checks = {
         "row_count": (
             """
@@ -58,13 +78,15 @@ def run_stage_quality_checks() -> dict:
             """,
             lambda v: v == 0,
             "Hay event_status fuera del dominio permitido"
-        )
+        ),
+        "stage_matches_delta_row_count": (
+            stage_row_count,
+            lambda v: v == expected_delta_rows,
+            f"Stage row_count ({stage_row_count}) no coincide con delta row_count ({expected_delta_rows})",
+        ),
     }
 
-    dag_id = context["dag"].dag_id
-    task_id = context["task"].task_id
-    run_id = context["run_id"]
-    source_table = "MEETUP_DE.RAW.EVENTS_STAGE_15M"
+    
 
     rows_to_insert = []
     failures = []

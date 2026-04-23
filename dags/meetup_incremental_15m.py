@@ -98,7 +98,6 @@ with DAG(
 ) as dag:
     
     run_started = mark_pipeline_started()
-    stage_quality = validate_events_stage()\
     
     delta_info = generate_events_delta()
     audited_delta = audit_delta_generated(delta_info)
@@ -121,6 +120,8 @@ with DAG(
         sql=copy_sql,
         retries=3,
     )
+
+    stage_quality = validate_events_stage()
 
     merge_events = SQLExecuteQueryOperator(
         task_id="merge_events",
