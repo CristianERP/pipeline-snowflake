@@ -29,28 +29,28 @@ def run_stage_quality_checks() -> dict:
 
     checks = {
         "row_count": (
-            """
+            f"""
             SELECT COUNT(*)
-            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            FROM {source_table}
             """,
             lambda v: v > 0,
             "EVENTS_STAGE_15M está vacía"
         ),
         "null_event_id": (
-            """
+            f"""
             SELECT COUNT(*)
-            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            FROM {source_table}
             WHERE "event_id" IS NULL
             """,
             lambda v: v == 0,
             "Hay event_id nulos"
         ),
         "duplicate_event_id": (
-            """
+            f"""
             SELECT COUNT(*)
             FROM (
                 SELECT "event_id"
-                FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+                FROM {source_table}
                 GROUP BY 1
                 HAVING COUNT(*) > 1
             )
@@ -59,9 +59,9 @@ def run_stage_quality_checks() -> dict:
             "Hay event_id duplicados"
         ),
         "negative_rsvp_values": (
-            """
+            f"""
             SELECT COUNT(*)
-            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            FROM {source_table}
             WHERE COALESCE("yes_rsvp_count", 0) < 0
                OR COALESCE("maybe_rsvp_count", 0) < 0
                OR COALESCE("waitlist_count", 0) < 0
@@ -70,9 +70,9 @@ def run_stage_quality_checks() -> dict:
             "Hay métricas RSVP negativas"
         ),
         "invalid_status": (
-            """
+            f"""
             SELECT COUNT(*)
-            FROM MEETUP_DE.RAW.EVENTS_STAGE_15M
+            FROM {source_table}
             WHERE "event_status" IS NOT NULL
               AND LOWER("event_status") NOT IN ('upcoming', 'cancelled')
             """,
@@ -80,7 +80,7 @@ def run_stage_quality_checks() -> dict:
             "Hay event_status fuera del dominio permitido"
         ),
         "stage_matches_delta_row_count": (
-            stage_row_count,
+            f'SELECT COUNT(*) FROM {source_table}',
             lambda v: v == expected_delta_rows,
             f"Stage row_count ({stage_row_count}) no coincide con delta row_count ({expected_delta_rows})",
         ),
