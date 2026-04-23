@@ -5,8 +5,7 @@ from airflow.providers.slack.operators.slack_webhook import \
     SlackWebhookOperator
 from airflow.sdk import DAG, task
 from airflow.task.trigger_rule import TriggerRule
-from src.monitoring.audit import (insert_file_audit, update_pipeline_run_end,
-                                  upsert_pipeline_run_start)
+from src.monitoring.audit import insert_file_audit
 from src.quality.checks import run_stage_quality_checks
 from src.services.delta_generator import generate_events_delta_file
 from src.services.storage import upload_file_to_s3
@@ -51,21 +50,6 @@ def build_copy_sql(delta_info: dict) -> str:
     """
 
 @task
-def mark_pipeline_started():
-    upsert_pipeline_run_start()
-
-@task(trigger_rule=TriggerRule.ALL_SUCCESS)
-def mark_pipeline_success():
-    update_pipeline_run_end(status="SUCCESS")
-
-@task(trigger_rule=TriggerRule.ONE_FAILED)
-def mark_pipeline_failed():
-    update_pipeline_run_end(
-        status="FAILED",
-        error_message="Check failed task in Airflow logs."
-    )
-
-@task
 def audit_delta_generated(delta_info: dict) -> dict:
     insert_file_audit(
         file_name=delta_info["file_name"],
@@ -97,16 +81,13 @@ with DAG(
     tags=["meetup", "incremental"],
 ) as dag:
     
-    run_started = mark_pipeline_started()
-    stage_quality = validate_events_stage()\
-    
     delta_info = generate_events_delta()
     audited_delta = audit_delta_generated(delta_info)
     
-    uploaded_delta = upload_delta_to_s3(delta_info)
+    uploaded_delta = upload_delta_to_s3(audited_delta)
     audited_upload = audit_delta_uploaded(uploaded_delta)
 
-    copy_sql = build_copy_sql(uploaded_delta)
+    copy_sql = build_copy_sql(audited_delta)
 
     truncate_stage_table = SQLExecuteQueryOperator(
         task_id="truncate_stage_table",
@@ -121,6 +102,8 @@ with DAG(
         sql=copy_sql,
         retries=3,
     )
+
+    stage_quality = validate_events_stage()
 
     merge_events = SQLExecuteQueryOperator(
         task_id="merge_events",
@@ -160,12 +143,9 @@ with DAG(
         retries=2,
     )
 
-    run_success = mark_pipeline_success()
-    run_failed = mark_pipeline_failed()
 
     (
-        run_started
-        >> delta_info
+        delta_info
         >> audited_delta
         >> uploaded_delta
         >> audited_upload
@@ -177,9 +157,8 @@ with DAG(
         >> rebuild
         >> export_processed
         >> notify_success
-        >> run_success
     )
-
+    
     [
         delta_info,
         audited_delta,
@@ -191,4 +170,4 @@ with DAG(
         merge_events,
         rebuild,
         export_processed,
-    ] >> notify_failure >> run_failed
+    ] >> notify_failure

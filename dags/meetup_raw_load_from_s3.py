@@ -7,6 +7,7 @@ from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.slack.operators.slack_webhook import \
     SlackWebhookOperator
 from airflow.task.trigger_rule import TriggerRule
+from src.monitoring.audit import insert_file_audit
 from utils.normalization import normalize_csv_bytes_to_utf8
 
 FILES = [
@@ -95,6 +96,19 @@ def build_sql(file_info: dict) -> str:
     MATCH_BY_COLUMN_NAME = CASE_INSENSITIVE;
     """
 
+@task
+def audit_normalized_file(file_info: dict) -> dict:
+    insert_file_audit(
+        file_name=file_info["file_name"],
+        table_name=file_info["table_name"],
+        source_key=f"landing/{file_info['file_name']}",
+        normalized_key=file_info["normalized_key"],
+        detected_encoding=file_info["detected_encoding"],
+        status="SUCCESS",
+        event_type="FILE_NORMALIZED",
+    )
+    return file_info
+
 with DAG(
     dag_id="meetup_load_raw",
     start_date=datetime(2026, 4, 1),
@@ -105,6 +119,7 @@ with DAG(
 ) as dag:
 
     normalized_files = normalize_one_file.expand(file_info=FILES)
+    audited_normalized_files = audit_normalized_file.expand(file_info=normalized_files)
 
     sql_statements = build_sql.expand(file_info=FILES)
 
@@ -150,7 +165,15 @@ with DAG(
         retries=2,
     )
 
-    normalized_files >> sql_statements >> load_raw >> incremental_structure >> build_analytics_initial >> notify_success
+    (
+        normalized_files
+        >> audited_normalized_files
+        >> sql_statements
+        >> load_raw
+        >> incremental_structure
+        >> build_analytics_initial
+        >> notify_success
+    )
     [normalized_files, load_raw] >> notify_failure
 
 
