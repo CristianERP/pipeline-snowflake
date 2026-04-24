@@ -5,13 +5,16 @@ from airflow.providers.slack.operators.slack_webhook import \
     SlackWebhookOperator
 from airflow.sdk import DAG, task
 from airflow.task.trigger_rule import TriggerRule
-from src.monitoring.audit import insert_file_audit
-from src.quality.checks import run_stage_quality_checks
-from src.services.delta_generator import generate_events_delta_file
-from src.services.storage import upload_file_to_s3
 
-BUCKET = "meetup-pipeline-2026"
-INCREMENTAL_PREFIX = "incremental/events/"
+from meetup_pipeline.config.settings import settings
+from meetup_pipeline.ingestion.delta_generator import \
+    generate_events_delta_file
+from meetup_pipeline.ingestion.storage import upload_file_to_s3
+from meetup_pipeline.monitoring.audit import insert_file_audit
+from meetup_pipeline.quality.checks import run_stage_quality_checks
+
+BUCKET = settings.s3.bucket
+INCREMENTAL_PREFIX = settings.s3.incremental_prefix
 
 DEFAULT_ARGS = {
     "owner": "cristian",
@@ -79,6 +82,7 @@ with DAG(
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
     tags=["meetup", "incremental"],
+    template_searchpath=["/opt/airflow/sql"],
 ) as dag:
     
     delta_info = generate_events_delta()
@@ -108,14 +112,14 @@ with DAG(
     merge_events = SQLExecuteQueryOperator(
         task_id="merge_events",
         conn_id="snowflake_default",
-        sql="sql/merge_events.sql",
+        sql="snowflake/dml/merge_events.sql",
         retries=2,
     )
 
     rebuild = SQLExecuteQueryOperator(
         task_id="rebuild_analytics",
         conn_id="snowflake_default",
-        sql="sql/rebuild.sql",
+        sql="snowflake/marts/rebuild.sql",
         split_statements=True,
         retries=2,
     )
@@ -123,7 +127,7 @@ with DAG(
     export_processed = SQLExecuteQueryOperator(
         task_id="export_processed_tables",
         conn_id="snowflake_default",
-        sql="sql/export_data.sql",
+        sql="snowflake/exports/export_data.sql",
         split_statements=True,
         retries=3,
     )
