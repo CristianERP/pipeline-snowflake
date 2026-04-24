@@ -1,6 +1,7 @@
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 from airflow.sdk import get_current_context
-from src.quality.monitoring import insert_dq_results
+
+from meetup_pipeline.quality.monitoring import insert_dq_results
 
 
 def run_stage_quality_checks() -> dict:

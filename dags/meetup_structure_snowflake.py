@@ -18,11 +18,12 @@ with DAG(
     catchup=False,
     default_args=DEFAULT_RETRY_ARGS,
     tags=["meetup", "structure"],
+    template_searchpath=["/opt/airflow/sql"],
 ) as dag:
 
     create_foundation = SQLExecuteQueryOperator(
         task_id="create_structure",
         conn_id="snowflake_default",
-        sql="sql/structure.sql",
+        sql="snowflake/ddl/structure.sql",
         split_statements=True,
     )
