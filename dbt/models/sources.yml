@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: raw
+    database: "{{ env_var('SNOWFLAKE_DATABASE') }}"
+    schema: RAW
+    tables:
+      - name: events
+        identifier: EVENTS
+
+      - name: groups
+        identifier: GROUPS
+
+      - name: venues
+        identifier: VENUES
+
+      - name: categories
+        identifier: CATEGORIES
+
+      - name: topics
+        identifier: TOPICS
+
+      - name: groups_topics
+        identifier: GROUPS_TOPICS
+
+      - name: cities
+        identifier: CITIES
+
+      - name: members_topics
+        identifier: MEMBERS_TOPICS

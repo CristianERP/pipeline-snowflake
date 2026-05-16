@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: stg_events
+    description: Cleaned staging model for raw Meetup events.
+    columns:
+      - name: event_id
+        data_tests:
+          - not_null
+          - unique
+      - name: group_id
+        data_tests:
+          - not_null
+
+  - name: stg_groups
+    description: Cleaned staging model for raw Meetup groups.
+    columns:
+      - name: group_id
+        data_tests:
+          - not_null
+          - unique
+
+  - name: stg_venues
+    description: Cleaned staging model for raw Meetup venues.
+    columns:
+      - name: venue_id
+        data_tests:
+          - not_null
+
+  - name: stg_categories
+    description: Cleaned staging model for raw Meetup categories.
+    columns:
+      - name: category_id
+        data_tests:
+          - not_null
+
+  - name: stg_topics
+    description: Cleaned staging model for raw Meetup topics.
+    columns:
+      - name: topic_id
+        data_tests:
+          - not_null
+
+  - name: stg_groups_topics
+    description: Bridge table between groups and topics.
+    columns:
+      - name: group_id
+        data_tests:
+          - not_null
+      - name: topic_id
+        data_tests:
+          - not_null
