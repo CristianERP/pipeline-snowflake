@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.slack.operators.slack_webhook import \
     SlackWebhookOperator
 from airflow.sdk import DAG, task
@@ -116,13 +117,14 @@ with DAG(
         retries=2,
     )
 
-    rebuild = SQLExecuteQueryOperator(
-        task_id="rebuild_analytics",
-        conn_id="snowflake_default",
-        sql="snowflake/marts/rebuild.sql",
-        split_statements=True,
-        retries=2,
-    )
+    run_dbt_build = BashOperator(
+    task_id="run_dbt_build",
+    bash_command="""
+        cd /opt/airflow/dbt &&
+        dbt build --project-dir /opt/airflow/dbt --profiles-dir /opt/airflow/dbt
+    """,
+    retries=2,
+)
 
     export_processed = SQLExecuteQueryOperator(
         task_id="export_processed_tables",
@@ -158,7 +160,7 @@ with DAG(
         >> copy_delta_to_stage
         >> stage_quality
         >> merge_events
-        >> rebuild
+        >> run_dbt_build
         >> export_processed
         >> notify_success
     )
@@ -172,6 +174,6 @@ with DAG(
         copy_delta_to_stage,
         stage_quality,
         merge_events,
-        rebuild,
+        run_dbt_build,
         export_processed,
     ] >> notify_failure
