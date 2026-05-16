@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: events_enriched
+    description: Enriched event-level analytical table combining events, groups, and venues.
+    columns:
+      - name: event_id
+        data_tests:
+          - not_null
+          - unique
+      - name: group_id
+        data_tests:
+          - not_null
+
+  - name: agg_events_by_city
+    description: Aggregated event metrics by city, state, and country.
+    columns:
+      - name: venue_city
+        data_tests:
+          - not_null
+      - name: total_events
+        data_tests:
+          - not_null
+
+  - name: agg_groups_by_category
+    description: Aggregated group metrics by category.
+    columns:
+      - name: category_name
+        data_tests:
+          - not_null
+      - name: total_groups
+        data_tests:
+          - not_null
+
+  - name: agg_groups_by_topic
+    description: Aggregated group metrics by topic.
+    columns:
+      - name: topic_name
+        data_tests:
+          - not_null
+      - name: total_groups
+        data_tests:
+          - not_null
+
+  - name: agg_events_by_group
+    description: Aggregated event metrics by group.
+    columns:
+      - name: group_id
+        data_tests:
+          - not_null
+      - name: total_events
+        data_tests:
+          - not_null

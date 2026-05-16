@@ -1,0 +1,21 @@
+select
+    "group_id" as group_id,
+    "category_id" as category_id,
+    "category.name" as category_name,
+    "category.shortname" as category_shortname,
+    "city_id" as city_id,
+    "city" as group_city,
+    "state" as group_state,
+    "country" as group_country,
+    "members" as group_members,
+    "rating" as group_rating,
+    "visibility" as group_visibility,
+    "timezone" as group_timezone,
+    "urlname" as group_urlname,
+    "who" as group_who,
+    "link" as group_link,
+    "lat" as group_lat,
+    "lon" as group_lon,
+    "organizer.member_id" as organizer_member_id,
+    "organizer.name" as organizer_name
+from {{ source('raw', 'groups') }}

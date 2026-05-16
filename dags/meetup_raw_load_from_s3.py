@@ -7,20 +7,16 @@ from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.slack.operators.slack_webhook import \
     SlackWebhookOperator
 from airflow.task.trigger_rule import TriggerRule
-from src.monitoring.audit import insert_file_audit
-from utils.normalization import normalize_csv_bytes_to_utf8
 
-FILES = [
-    {"file_name": "categories.csv", "table_name": "CATEGORIES"},
-    {"file_name": "cities.csv", "table_name": "CITIES"},
-    {"file_name": "events.csv", "table_name": "EVENTS"},
-    {"file_name": "groups.csv", "table_name": "GROUPS"},
-    {"file_name": "groups_topics.csv", "table_name": "GROUPS_TOPICS"},
-    # {"file_name": "members.csv", "table_name": "MEMBERS"},
-    {"file_name": "members_topics.csv", "table_name": "MEMBERS_TOPICS"},
-    {"file_name": "topics.csv", "table_name": "TOPICS"},
-    {"file_name": "venues.csv", "table_name": "VENUES"},
-]
+from meetup_pipeline.config.datasets import RAW_DATASETS
+from meetup_pipeline.config.settings import settings
+from meetup_pipeline.ingestion.normalization import normalize_csv_bytes_to_utf8
+from meetup_pipeline.monitoring.audit import insert_file_audit
+
+FILES = RAW_DATASETS
+BUCKET = settings.s3.bucket
+SOURCE_PREFIX = settings.s3.source_prefix
+NORMALIZED_PREFIX = settings.s3.normalized_prefix
 
 DEFAULT_RETRY_ARGS = {
     "owner": "cristian",
@@ -29,11 +25,6 @@ DEFAULT_RETRY_ARGS = {
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=10),
 }
-
-
-BUCKET = "meetup-pipeline-2026"
-SOURCE_PREFIX = "landing/"
-NORMALIZED_PREFIX = "landing_normalized/"
 
 
 @task(
@@ -115,7 +106,8 @@ with DAG(
     schedule=None,
     catchup=False,
     default_args=DEFAULT_RETRY_ARGS,
-    tags=["meetup", "load_raw"]
+    tags=["meetup", "load_raw"],
+    template_searchpath=["/opt/airflow/sql"],
 ) as dag:
 
     normalized_files = normalize_one_file.expand(file_info=FILES)
@@ -145,7 +137,7 @@ with DAG(
         task_id="build_analytics_initial",
         conn_id="snowflake_default",
         database="MEETUP_DE",
-        sql="sql/rebuild.sql",
+        sql="snowflake/ddl/structure.sql",
         split_statements=True,
         retries=2,
     )

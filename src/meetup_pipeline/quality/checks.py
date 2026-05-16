@@ -1,6 +1,7 @@
 from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
 from airflow.sdk import get_current_context
-from src.quality.monitoring import insert_dq_results
+
+from meetup_pipeline.quality.monitoring import insert_dq_results
 
 
 def run_stage_quality_checks() -> dict:
@@ -82,7 +83,8 @@ def run_stage_quality_checks() -> dict:
         "stage_matches_delta_row_count": (
             f'SELECT COUNT(*) FROM {source_table}',
             lambda v: v == expected_delta_rows,
-            f"Stage row_count ({stage_row_count}) no coincide con delta row_count ({expected_delta_rows})",
+            f"""Stage row_count ({stage_row_count}) 
+            no coincide con delta row_count ({expected_delta_rows})""",
         ),
     }
 
